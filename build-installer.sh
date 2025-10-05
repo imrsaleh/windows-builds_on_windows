@@ -47,12 +47,6 @@ err() {
   exit 1
 }
 
-# Function to clean carriage returns from variables
-clean_cr() {
-    local var="$1"
-    printf '%s' "$var" | tr -d '\r'
-}
-
 [[ "${CI:-}" ]] || [[ "${VIRTUAL_ENV:-}" ]] || err "Can only be built in a virtual environment"
 
 for dep in "${!DEPS[@]}"; do
@@ -72,26 +66,12 @@ fi
 
 read -r appname apprel \
   < <(yq -r '.app | "\(.name) \(.rel)"' <<< "${CONFIGJSON}")
-appname=$(clean_cr "$appname")
-apprel=$(clean_cr "$apprel")
-
 read -r gitrepo gitref \
   < <(yq -r '.git | "\(.repo) \(.ref)"' <<< "${CONFIGJSON}")
-gitrepo=$(clean_cr "$gitrepo")
-gitref=$(clean_cr "$gitref")
-
 read -r implementation pythonversion platform \
   < <(yq -r --arg b "${BUILDNAME}" '.builds[$b] | "\(.implementation) \(.pythonversion) \(.platform)"' <<< "${CONFIGJSON}")
-implementation=$(clean_cr "$implementation")
-pythonversion=$(clean_cr "$pythonversion")
-platform=$(clean_cr "$platform")
-
 read -r pythonversionfull pythonfilename pythonurl pythonsha256 \
   < <(yq -r --arg b "${BUILDNAME}" '.builds[$b].pythonembed | "\(.version) \(.filename) \(.url) \(.sha256)"' <<< "${CONFIGJSON}")
-pythonversionfull=$(clean_cr "$pythonversionfull")
-pythonfilename=$(clean_cr "$pythonfilename")
-pythonurl=$(clean_cr "$pythonurl")
-pythonsha256=$(clean_cr "$pythonsha256")
 
 gitrepo="${GITREPO:-${gitrepo}}"
 gitref="${GITREF:-${gitref}}"
@@ -159,8 +139,8 @@ get_assets() {
       curl -SLo "${DIR_CACHE}/${filename}" "${url}"
     fi
     log "Checking asset: ${assetname}"
-    # sha256sum -c - <<< "${sha256} ${DIR_CACHE}/${filename}"
-    done < <(yq -r --arg b "${BUILDNAME}" '.builds[$b].assets[]' <<< "${CONFIGJSON}" | tr -d '\r')
+    sha256sum -c - <<< "${sha256} ${DIR_CACHE}/${filename}"
+  done < <(yq -r --arg b "${BUILDNAME}" '.builds[$b].assets[]' <<< "${CONFIGJSON}")
 }
 
 build_app() {
@@ -195,30 +175,14 @@ build_app() {
       -h ${size} \
       "${DIR_REPO}/icon.svg"
   done
-  
-  # Create .ico using ImageMagick. On Windows the plain 'convert' may be the
-  # system tool, so prefer 'magick' and only use 'convert' if it's ImageMagick.
-  ICON_PNGS=("${DIR_BUILD}/icon-16.png" "${DIR_BUILD}/icon-32.png" "${DIR_BUILD}/icon-48.png" "${DIR_BUILD}/icon-256.png")
-  if command -v magick >/dev/null 2>&1; then
-    magick "${ICON_PNGS[@]}" "${DIR_BUILD}/icon.ico"
-  else
-    if convert -version 2>&1 | grep -qi 'ImageMagick'; then
-      convert "${ICON_PNGS[@]}" "${DIR_BUILD}/icon.ico"
-    else
-      err "ImageMagick not found (install ImageMagick or ensure 'magick' is on PATH)."
-    fi
-  fi
+  convert \
+    "${DIR_BUILD}/icon-"{16,32,48,256}.png \
+    "${DIR_BUILD}/icon.ico"
 }
 
 download_wheels() {
   log "Downloading wheels"
-  local reqfile
-  reqfile=$(mktemp) || err "mktemp failed"
-  # write requirements to a temp file (avoid /dev/stdin on Windows/MSYS)
-  yq -r --arg b "${BUILDNAME}" '.builds[$b].dependencies | to_entries[] | "\(.key)==\(.value)"' <<< "${CONFIGJSON}" > "${reqfile}"
-
-  # Try downloading binary wheels only first (fast, no build tools required).
-  if pip download \
+  pip download \
     "${PIP_ARGS[@]}" \
     --require-hashes \
     --only-binary=:all: \
@@ -226,83 +190,39 @@ download_wheels() {
     --python-version="${pythonversion}" \
     --implementation="${implementation}" \
     --dest="${DIR_WHEELS}" \
-    --requirement "${reqfile}"; then
-    log "Downloaded binary wheels"
-  else
-    # Fallback: allow source distributions (sdists) if binary wheels are unavailable.
-    # When using --platform/--python-version with sdists pip requires --no-deps.
-    # Note: building sdists into wheels may require a build toolchain (compilers).
-    log "Binary wheels missing for some packages; retrying allowing source distributions"
-    pip download \
-      "${PIP_ARGS[@]}" \
-      --only-binary=:none: \
-      --no-deps \
-      --platform="${platform}" \
-      --python-version="${pythonversion}" \
-      --implementation="${implementation}" \
-      --dest="${DIR_WHEELS}" \
-      --requirement "${reqfile}" \
-      || err "pip download failed when allowing source distributions"
-  fi
-
-  rm -f "${reqfile}"
+    --requirement=/dev/stdin \
+    < <(yq -r --arg b "${BUILDNAME}" '.builds[$b].dependencies | to_entries[] | "\(.key)==\(.value)"' <<< "${CONFIGJSON}")
 }
 
 prepare_python() {
   log "Preparing Python"
   local arch
-  # Clean the platform variable
-  platform=$(clean_cr "$platform")
-  if [[ "${platform}" == "win_amd64" ]]; then
-    arch="amd64"
-  else
-    arch="win32"
-  fi
+  [[ "${platform}" == "win_amd64" ]] && arch="amd64" || arch="win32"
   install -v "${DIR_CACHE}/${pythonfilename}" "${DIR_BUILD}/python-${pythonversionfull}-embed-${arch}.zip"
 }
 
 prepare_assets() {
   log "Preparing assets"
   local assetname
-  while IFS= read -r assetname; do
-    # Clean the assetname
-    assetname=$(clean_cr "$assetname")
-    [[ -z "$assetname" || "$assetname" == "null" ]] && continue
-    
+  while read -r assetname; do
     log "Preparing asset: ${assetname}"
     local type filename sourcedir targetdir
     read -r type filename sourcedir targetdir \
-      < <(yq -r --arg a "${assetname}" '.assets[$a] | "\(.type) \(.filename) \(.sourcedir) \(.targetdir)"' <<< "${CONFIGJSON}" 2>/dev/null || echo "")
-    
-    # Clean the read values
-    type=$(clean_cr "$type")
-    filename=$(clean_cr "$filename")
-    sourcedir=$(clean_cr "$sourcedir")
-    targetdir=$(clean_cr "$targetdir")
-    
-    [[ -z "$type" ]] && continue
-    
+      < <(yq -r --arg a "${assetname}" '.assets[$a] | "\(.type) \(.filename) \(.sourcedir) \(.targetdir)"' <<< "${CONFIGJSON}")
     case "${type}" in
       zip)
         mkdir -p "${DIR_ASSETS}/${assetname}"
-        unzip -q "${DIR_CACHE}/${filename}" -d "${DIR_ASSETS}/${assetname}"
+        unzip "${DIR_CACHE}/${filename}" -d "${DIR_ASSETS}/${assetname}"
         sourcedir="${DIR_ASSETS}/${assetname}/${sourcedir}"
         ;;
       *)
         sourcedir="${DIR_CACHE}"
         ;;
     esac
-    
-    # Read files array safely
-    while IFS= read -r file_config; do
-      [[ -z "$file_config" ]] && continue
-      local from to
-      from=$(clean_cr "$(echo "$file_config" | cut -d' ' -f1)")
-      to=$(clean_cr "$(echo "$file_config" | cut -d' ' -f2-)")
-      [[ -n "$from" && -n "$to" ]] && install -vDT "${sourcedir}/${from}" "${DIR_BUILD}/${targetdir}/${to}"
-    done < <(yq -r --arg a "${assetname}" '.assets[$a].files[]? | "\(.from) \(.to)"' <<< "${CONFIGJSON}" 2>/dev/null | tr -d '\r')
-    
-  done < <(yq -r --arg b "${BUILDNAME}" '.builds[$b].assets[]?' <<< "${CONFIGJSON}" 2>/dev/null | tr -d '\r')
+    while read -r from to; do
+      install -vDT "${sourcedir}/${from}" "${DIR_BUILD}/${targetdir}/${to}"
+    done < <(yq -r --arg a "${assetname}" '.assets[$a].files[] | "\(.from) \(.to)"' <<< "${CONFIGJSON}")
+  done < <(yq -r --arg b "${BUILDNAME}" '.builds[$b].assets[]' <<< "${CONFIGJSON}")
 }
 
 prepare_files() {
@@ -319,17 +239,13 @@ prepare_installer() {
   log "Reading version string"
 
   local versionstring version vi_version
-  versionstring="$(PYTHONPATH="${DIR_PKGS}" python -c "from importlib.metadata import version;print(version('${appname}'))")" || err "Failed to get package version"
-  versionstring=$(clean_cr "$versionstring")
-  log "versionstring='${versionstring}'"
-
+  versionstring="$(PYTHONPATH="${DIR_PKGS}" python -c "from importlib.metadata import version;print(version('${appname}'))")"
   distinfo="${DIR_PKGS}/${appname}-${versionstring}.dist-info"
 
   # custom gitrefs that point to a tag should use the same file name format as builds from untagged commits
   if [[ -n "${GITREF}" && "${versionstring}" != *+* ]]; then
     local _commit
     _commit="$(git -C "${TEMP}/source.git" -c core.abbrev=7 rev-parse --short HEAD)"
-    _commit=$(clean_cr "$_commit")
     version="${versionstring%%+*}+0.g${_commit}"
   else
     version="${versionstring}"
@@ -344,168 +260,33 @@ prepare_installer() {
     vi_version="${versionstring%%+*}.${_versiondist}"
   fi
 
-  # ========================================================================
-  # WINDOWS PATH CONVERSION HELPER FUNCTION
-  # ========================================================================
-  # This function converts POSIX paths to Windows paths and normalizes them
-  # to use forward slashes, which are accepted by both NSIS and Python on Windows
-  convert_to_windows_path() {
-    local posix_path="$1"
-    local win_path="${posix_path}"
-    
-    # Try wslpath first (WSL environment)
-    if command -v wslpath >/dev/null 2>&1; then
-      win_path=$(wslpath -w "${posix_path}" 2>/dev/null || echo "${posix_path}")
-    # Try cygpath (Cygwin environment)
-    elif command -v cygpath >/dev/null 2>&1; then
-      win_path=$(cygpath -w "${posix_path}" 2>/dev/null || echo "${posix_path}")
-    # If neither is available, check if we're on Windows (Git Bash, MSYS2, etc.)
-    elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
-      # Already in Windows format, just normalize
-      win_path="${posix_path}"
-    fi
-    
-    # Normalize all backslashes to forward slashes
-    # This is critical for NSIS and Windows Python compatibility
-    win_path="${win_path//\\//}"
-    
-    # Remove any carriage returns or newlines
-    win_path=$(printf '%s' "${win_path}" | tr -d '\r\n')
-    
-    echo "${win_path}"
-  }
-
-  # ========================================================================
-  # PREPARE INSTALLER TEMPLATE (installer.nsi)
-  # ========================================================================
   log "Preparing installer template"
-  
-  # Convert DIR_BUILD to Windows path with forward slashes
-  WIN_DIR_BUILD=$(convert_to_windows_path "${DIR_BUILD}")
-  log "WIN_DIR_BUILD='${WIN_DIR_BUILD}'"
-  
-  # Use envsubst to replace variables in the template
   # shellcheck disable=SC2016
   env -i \
-    PATH="${PATH}" \
-    DIR_BUILD="${WIN_DIR_BUILD}" \
+    DIR_BUILD="${DIR_BUILD}" \
     VERSION="${version}-${apprel}" \
     VI_VERSION="${vi_version}" \
     envsubst '$DIR_BUILD $VERSION $VI_VERSION' \
     < "${ROOT}/installer.nsi" \
     > "${DIR_BUILD}/installer.nsi"
 
-  # ========================================================================
-  # PREPARE PYNSIST CONFIG (installer.cfg)
-  # ========================================================================
   log "Preparing pynsist config"
-
-  # Build and clean INSTALLER_NAME to remove newlines/CRs and normalize slashes
-  INSTALLER_NAME_RAW="${DIR_DIST}/${appname}-${version}-${apprel}-${BUILDNAME}.exe"
-  INSTALLER_NAME=$(convert_to_windows_path "${INSTALLER_NAME_RAW}")
-  log "INSTALLER_NAME='${INSTALLER_NAME}'"
-
-  # Convert all paths to Windows format with forward slashes
-  WIN_DIR_BUILD=$(convert_to_windows_path "${DIR_BUILD}")
-  WIN_DIR_WHEELS=$(convert_to_windows_path "${DIR_WHEELS}")
-  WIN_DIR_DISTINFO=$(convert_to_windows_path "${distinfo}")
-  
-  log "WIN_DIR_BUILD='${WIN_DIR_BUILD}'"
-  log "WIN_DIR_WHEELS='${WIN_DIR_WHEELS}'"
-  log "WIN_DIR_DISTINFO='${WIN_DIR_DISTINFO}'"
-
-  # Use perl substitution to replace placeholders with Windows-style paths
+  # shellcheck disable=SC2016
   env -i \
-    PATH="${PATH}" \
-    DIR_BUILD_WIN="${WIN_DIR_BUILD}" \
-    DIR_WHEELS_WIN="${WIN_DIR_WHEELS}" \
-    DIR_DISTINFO_WIN="${WIN_DIR_DISTINFO}" \
+    DIR_BUILD="${DIR_BUILD}" \
+    DIR_WHEELS="${DIR_WHEELS}" \
+    DIR_DISTINFO="${distinfo}" \
     VERSION="${version}-${apprel}" \
     PYTHONVERSION="${pythonversionfull}" \
-    INSTALLER_NAME="${INSTALLER_NAME}" \
+    INSTALLER_NAME="${DIR_DIST}/${appname}-${version}-${apprel}-${BUILDNAME}.exe" \
     NSI_TEMPLATE="installer.nsi" \
-    perl -pe 's/\$\{?DIR_BUILD\}?/$ENV{DIR_BUILD_WIN}/g; s/\$\{?DIR_WHEELS\}?/$ENV{DIR_WHEELS_WIN}/g; s/\$\{?DIR_DISTINFO\}?/$ENV{DIR_DISTINFO_WIN}/g; s/\$\{?VERSION\}?/$ENV{VERSION}/g; s/\$\{?PYTHONVERSION\}?/$ENV{PYTHONVERSION}/g; s/\$\{?INSTALLER_NAME\}?/$ENV{INSTALLER_NAME}/g; s/\$\{?NSI_TEMPLATE\}?/$ENV{NSI_TEMPLATE}/g' \
+    envsubst '$DIR_BUILD $DIR_DISTINFO $DIR_WHEELS $VERSION $ENTRYPOINT $PYTHONVERSION $INSTALLER_NAME $NSI_TEMPLATE' \
     < "${ROOT}/installer.cfg" \
     > "${DIR_BUILD}/installer.cfg"
-
-  # Normalize line endings to Unix format (LF only)
-  if command -v perl >/dev/null 2>&1; then
-    perl -pi -e 's/\r\n|\r/\n/g' "${DIR_BUILD}/installer.cfg" || true
-  else
-    sed -i 's/\r$//' "${DIR_BUILD}/installer.cfg" || true
-  fi
-
-  # ========================================================================
-  # HANDLE LOCAL WHEELS
-  # ========================================================================
-  # Remove local_wheels section if there are no wheels
-  (
-    shopt -s nullglob
-    files=( "${DIR_WHEELS}"/*.whl )
-    shopt -u nullglob
-    if [ "${#files[@]}" -eq 0 ]; then
-      log "No local wheels found in ${DIR_WHEELS}; removing entire local_wheels section from installer.cfg"
-      awk 'BEGIN{in_local_wheels=0}
-        {
-          if (in_local_wheels && $0 !~ /^[[:space:]]/) { in_local_wheels = 0 }
-          if ($0 ~ /^[[:space:]]*local_wheels[[:space:]]*=/) { in_local_wheels = 1; next }
-          if (in_local_wheels) { next }
-          print
-        }' "${DIR_BUILD}/installer.cfg" > "${DIR_BUILD}/installer.cfg.tmp" && mv "${DIR_BUILD}/installer.cfg.tmp" "${DIR_BUILD}/installer.cfg"
-    else
-      log "Found ${#files[@]} local wheels in ${DIR_WHEELS}; keeping local_wheels block"
-    fi
-  )
-
-  log "Generated ${DIR_BUILD}/installer.cfg (first 200 lines):"
-  sed -n '1,200p' "${DIR_BUILD}/installer.cfg" || true
-
-  # ========================================================================
-  # VERIFY PATHS IN GENERATED FILES
-  # ========================================================================
-  log "Verifying paths in generated installer.nsi..."
-  
-  # Check if DIR_BUILD placeholder was properly replaced
-  if grep -q '\${DIR_BUILD}' "${DIR_BUILD}/installer.nsi" 2>/dev/null; then
-    log "WARNING: Found unreplaced \${DIR_BUILD} placeholder in installer.nsi"
-  fi
-  if grep -q '\$DIR_BUILD' "${DIR_BUILD}/installer.nsi" 2>/dev/null; then
-    log "WARNING: Found unreplaced \$DIR_BUILD placeholder in installer.nsi"
-  fi
-  
-  log "Installer preparation complete"
 }
 
 build_installer() {
   log "Building installer"
-
-  log "Checking required build files in: ${DIR_BUILD}"
-  ls -la "${DIR_BUILD}" || true
-
-  # required files that must be present in ${DIR_BUILD}
-  required=( "icon.ico" "LICENSE.txt" "config" )
-
-  missing=0
-  for f in "${required[@]}"; do
-    if [[ ! -f "${DIR_BUILD}/${f}" ]]; then
-      log "ERROR: required file missing: ${DIR_BUILD}/${f}"
-      missing=1
-    fi
-  done
-
-  if [[ "${missing}" -eq 1 ]]; then
-    log "Contents of ${DIR_BUILD}:"
-    ls -la "${DIR_BUILD}" || true
-    err "Missing required files in build directory. Run prepare_files or copy files/config into ${DIR_BUILD}."
-  fi
-
-  # debug: show Windows path used by pynsist (if available)
-  if command -v wslpath >/dev/null 2>&1; then
-    win_build="$(wslpath -w "${DIR_BUILD}" 2>/dev/null || true)"
-    log "Windows-visible build dir: ${win_build}"
-  fi
-
-  log "PYTHONPATH=${DIR_PKGS} PYNSIST_CACHE_DIR=${DIR_BUILD} pynsist ${DIR_BUILD}/installer.cfg"
   PYTHONPATH="${DIR_PKGS}" PYNSIST_CACHE_DIR="${DIR_BUILD}" pynsist "${DIR_BUILD}/installer.cfg"
 }
 
