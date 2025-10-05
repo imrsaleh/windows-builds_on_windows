@@ -110,7 +110,7 @@ Var configFileOverwrite
   SubSection /e "Bundled tools" bundled
     Section "FFMPEG" ffmpeg
       SetOutPath "$INSTDIR\ffmpeg"
-      File /r "${DIR_BUILD}/ffmpeg/*.*"
+      File /nonfatal "..\\ffmpeg\\*.*"
       SetShellVarContext current
 
       ; https://nsis.sourceforge.io/ConfigWrite
@@ -133,7 +133,7 @@ Var configFileOverwrite
   ; Since pynist's uninstaller invokes the same command instead of deleting all installed files and directories
   ; in reverse order explicitly, we don't care too much about adding it here.
   ; https://github.com/takluyver/pynsist/issues/66
-  RMDir /r "$INSTDIR\pkgs"
+  RMDir "$INSTDIR\pkgs"
   [[ super() ]]
 [% endblock install_pkgs %]
 
@@ -144,11 +144,11 @@ Var configFileOverwrite
   ${If} $configFileOverwrite == on
     SetOverwrite on
     SetOutPath $APPDATA\streamlink
-    File /r "${DIR_BUILD}/config"
+    File /nonfatal "..\\config"
   ${Else}
     SetOverwrite off
     SetOutPath $APPDATA\streamlink
-    File /r "${DIR_BUILD}/config"
+    File /nonfatal "..\\config"
   ${EndIf}
   SetOverwrite ifnewer
   SetOutPath -
@@ -167,7 +167,7 @@ Var configFileOverwrite
 
 [% block uninstall_files %]
   [[ super() ]]
-  RMDir /r "$INSTDIR\ffmpeg"
+  RMDir "$INSTDIR\ffmpeg"
 [% endblock %]
 
 [% block install_commands %]

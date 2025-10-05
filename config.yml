@@ -2,8 +2,8 @@ app:
   name: streamlink
   rel: 1
 git:
-  repo: https://github.com/streamlink/streamlink.git
-  ref: 7.6.0
+  repo: https://github.com/imrsaleh/streamlink.git
+  ref: 7.6.1
 assets:
   ffmpeg-x86_64:
     filename: ffmpeg-n8.0-win64-gpl-8.0.zip
@@ -44,7 +44,7 @@ builds:
       Brotli: 1.1.0 --hash=sha256:9011560a466d2eb3f5a6e4929cf4a09be405c64154e12df0dd72713f6500e32b
       certifi: 2025.8.3 --hash=sha256:f6c12493cfb1b06ba2ff328595af9350c65d6644968e5d3a2ffd78699af217a5
       cffi: 2.0.0 --hash=sha256:19f705ada2530c1167abacb171925dd886168931e0a7b78f5bffcae5c6b5be75
-      charset-normalizer: 3.4.3 --hash=sha256:cf1ebb7d78e1ad8ec2a8c4732c7be2e736f6e5123a4146c5b89c9d1f585f8cef
+      charset-normalizer: 3.4.3 --hash=sha256:ce571ab16d890d23b5c278547ba694193a45011ff86a9162a71307ed9f86759a
       h11: 0.16.0 --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
       idna: 3.10 --hash=sha256:946d195a0d259cbba61165e88e65941f16e9b36ea6ddb97f00452bae8b1287d3
       isodate: 0.7.2 --hash=sha256:28009937d8031054830160fce6d409ed342816b543597cece116d966c6d99e15
