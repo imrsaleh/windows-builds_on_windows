@@ -19,6 +19,7 @@ streamlink/windows-builds
 ```sh
 $ git clone https://github.com/imrsaleh/windows-builds_on_windows.git
 $ cd windows-builds_on_windows
+$ pip install virtualenv
 $ virtualenv venv
 $ source venv/Scripts/activate
 $ pip install -r requirements.txt
