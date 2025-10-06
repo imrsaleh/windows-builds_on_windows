@@ -3,7 +3,6 @@ streamlink/windows-builds
 
 ### Build requirements
 
-- GNU/Linux environment
 - [git](https://git-scm.com/)
 - [Python 3.13.7](https://www.python.org/) and the most recent version of [pip](https://pip.pypa.io/en/stable/)
   - [virtualenv](https://pypi.org/project/virtualenv/)
